@@ -317,7 +317,7 @@ class MyTrainingArguments(TrainingArguments):
 logger = logging.getLogger(__name__)
 
 
-def main():
+def train():
 
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, MyTrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
@@ -421,6 +421,7 @@ def main():
                 " before being passed to the model."
             )
         return output
+
     if data_args.block_size is None:
         block_size = tokenizer.model_max_length
         if block_size > 1024:
@@ -454,6 +455,7 @@ def main():
         }
         result["labels"] = result["input_ids"].copy()
         return result
+
     with training_args.main_process_first(desc="dataset map tokenization and grouping"):
         lm_datasets = []
         path = Path(data_args.dataset_dir)
@@ -637,6 +639,5 @@ def main():
         trainer.log_metrics("eval", metrics)
         trainer.save_metrics("eval", metrics)
 
-
 if __name__ == "__main__":
-    main()
+    train()
