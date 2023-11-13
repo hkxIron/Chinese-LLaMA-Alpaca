@@ -11,6 +11,7 @@ from transformers import (
     LlamaTokenizer,
 )
 from transformers.testing_utils import CaptureLogger
+from build_dataset import DataCollatorForSupervisedDataset, build_instruction_dataset
 
 
 def test_pretrain_data():
@@ -23,7 +24,6 @@ def test_pretrain_data():
     #tokenizer_name='chinese-llama-lora-7b'
     tokenizer_name='../../tokenizer/chs-llama'
     tokenizer = LlamaTokenizer.from_pretrained(tokenizer_name, **tokenizer_kwargs)
-
     tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
 
     # examples:{'text': Value(dtype='string', id=None)}
@@ -125,10 +125,87 @@ def test_pretrain_data():
 
         print("tokenizer input text:[",tokenizer.decode(sample['input_ids']), "] text len:", len(tokenizer.decode(sample['input_ids']))) # 1709
         print("tokenizer label text:[",tokenizer.decode(sample['labels']), "] label text len:", len(tokenizer.decode(sample['labels']))) # 1709
-        # input_ids与labels内容一样，但不是同一个对象
+        # 在pre train的language model中，input_ids与labels内容完全一样，但不是同一个对象, 他们会在计算loss时进行shift
+        # logits取前n-1, labels取后n-1个，即为前面预测后面
+        # logits = logits[..., :-1, :].contiguous()
+        # labels = labels[..., 1:].contiguous()
+        #
+        # log_probs = -nn.functional.log_softmax(logits, dim=-1)
         assert sample['input_ids'] == sample['labels']
         assert id(sample['input_ids']) != id(sample['labels'])
         print("="*10+"\n\n")
 
+IGNORE_INDEX = -100
+DEFAULT_PAD_TOKEN = "[PAD]"
+DEFAULT_EOS_TOKEN = "</s>"
+DEFAULT_BOS_TOKEN = "<s>"
+DEFAULT_UNK_TOKEN = "<unk>"
+def test_sft_data():
+    tokenizer_kwargs = {
+        "cache_dir": "temp_sft_data_cache_dir",
+        "use_fast": True,
+        "revision": 'main',
+        "use_auth_token": False
+    }
+    tokenizer_name='../../tokenizer/chs-llama'
+    tokenizer = LlamaTokenizer.from_pretrained(tokenizer_name, **tokenizer_kwargs)
+    tokenizer.add_special_tokens({"pad_token": "<pad>"})
+    tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
+
+    # examples:{'text': Value(dtype='string', id=None)}
+    print("vocab size:", len(tokenizer))
+    if tokenizer.pad_token is None:
+        print(f"Adding pad token {DEFAULT_PAD_TOKEN}")
+        tokenizer.add_special_tokens(dict(pad_token=DEFAULT_PAD_TOKEN))
+    print("vocab size:", len(tokenizer))
+    print("decode 1:", tokenizer.decode(1))
+    print("decode 0:", tokenizer.decode(0))
+    return
+
+    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    eval_dataset=None
+    train_dataset = None
+
+    dataset_dir='../../data/'
+    path = Path(dataset_dir)
+    files = [os.path.join(path, file.name) for file in path.glob("*.json")]
+    max_seq_length = 1024 # for test
+    print(f"Training files: {' '.join(files)}")
+    train_dataset = build_instruction_dataset(
+        data_path=files,
+        tokenizer=tokenizer,
+        max_seq_length=max_seq_length,
+        data_cache_dir=None,
+        preprocessing_num_workers=1)
+
+    print(f"Num train_samples:{len(train_dataset)}")
+    print("training example:")
+    for index in range(5):
+        sample=train_dataset[index]
+        print("dataset keys:", sample.keys()) # dict_keys(['input_ids', 'attention_mask', 'labels'])
+
+        #print("tokenizer attention_mask:", sample['attention_mask'], " attention mask size:", len(sample['attention_mask'])) # mask size:1024
+        print("tokenizer input ids:",sample['input_ids'], " len:", len(sample['input_ids'])) # input_ids len:1024
+
+        print("tokenizer input text:[",tokenizer.decode(sample['input_ids']), "] text len:", len(tokenizer.decode(sample['input_ids']))) # 1709
+        #print("tokenizer label text:[",tokenizer.decode(sample['labels']), "] label text len:", len(tokenizer.decode(sample['labels']))) # 1709
+        # 在pre train的language model中，input_ids与labels内容完全一样，但不是同一个对象, 他们会在计算loss时进行shift
+        # logits取前n-1, labels取后n-1个，即为前面预测后面
+        # logits = logits[..., :-1, :].contiguous()
+        # labels = labels[..., 1:].contiguous()
+        #
+        # log_probs = -nn.functional.log_softmax(logits, dim=-1)
+        #
+        # assert sample['input_ids'] == sample['labels']
+        # assert id(sample['input_ids']) != id(sample['labels'])
+        print("="*10+"\n\n")
+
+    # test collator
+    data_after_collator = data_collator([train_dataset[0], train_dataset[1]])
+    print("before collator sample_0:", train_dataset[0])
+    print("before collator sample_1:", train_dataset[1])
+    print("after collator:", data_after_collator)
+
 if __name__ == "__main__":
-    test_pretrain_data()
+    #test_pretrain_data()
+    test_sft_data()

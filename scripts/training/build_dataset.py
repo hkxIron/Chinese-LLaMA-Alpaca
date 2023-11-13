@@ -6,7 +6,8 @@ import datasets
 import torch
 from datasets import load_dataset, concatenate_datasets
 import transformers
-
+from datasets.formatting.formatting import LazyBatch
+from transformers import BatchEncoding
 
 IGNORE_INDEX = -100
 
@@ -24,7 +25,8 @@ def build_instruction_dataset(data_path: Union[List[str],str],
                 preprocessing_num_workers = None,
                 ):
 
-    def tokenization(examples):
+    def tokenization(examples:LazyBatch):
+        # 先删除缓存文件，才会进入该函数
         sources = []
         targets = []
         prompt = PROMPT_TEMPLATE
@@ -32,19 +34,20 @@ def build_instruction_dataset(data_path: Union[List[str],str],
             if input is not None and input !="":
                 instruction = instruction+'\n'+input
             source = prompt.format_map({'instruction':instruction})
-            target = f"{output}{tokenizer.eos_token}"
+            target = f"{output}{tokenizer.eos_token}" # 仅在答案后加一个结束符</s>
 
             sources.append(source)
             targets.append(target)
 
-        tokenized_sources = tokenizer(sources,return_attention_mask=False)
-        tokenized_targets = tokenizer(targets,return_attention_mask=False,add_special_tokens=False)
+        tokenized_sources:BatchEncoding = tokenizer(sources,return_attention_mask=False)
+        tokenized_targets:BatchEncoding = tokenizer(targets,return_attention_mask=False,add_special_tokens=False)
 
         all_input_ids = []
         all_labels = []
         for s,t in zip(tokenized_sources['input_ids'],tokenized_targets['input_ids']):
+            # input_ids, labels中labels部分完全相同，并没有shift
             input_ids = torch.LongTensor(s + t)[:max_seq_length]
-            labels = torch.LongTensor([IGNORE_INDEX] * len(s) + t)[:max_seq_length]
+            labels = torch.LongTensor([IGNORE_INDEX] * len(s) + t)[:max_seq_length] # labels中在source部分全部都是IGNORE_INDEX，不会参与loss计算
             assert len(input_ids) == len(labels)
             all_input_ids.append(input_ids)
             all_labels.append(labels)
@@ -100,5 +103,5 @@ class DataCollatorForSupervisedDataset(object):
         return dict(
             input_ids=input_ids,
             labels=labels,
-            attention_mask=input_ids.ne(self.tokenizer.pad_token_id),
+            attention_mask=input_ids.ne(self.tokenizer.pad_token_id), # 非padding的地方为True`
         )
